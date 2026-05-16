@@ -2,13 +2,13 @@
 
 ## 概要
 
-本ドキュメントは、ROS 2 Launch システムをゼロベースで再設計するための
+本ドキュメントは、Launch システムをゼロベースで再設計するための
 **Launch IR（Intermediate Representation / 中間表現）** の初期仕様を定義する。
 
 Launch IR は、YAML / XML / Python API などのフロントエンドがコンパイルする
 **抽象構文木（AST）** であり、Executor が解釈する唯一のデータ構造となる。
 
-本仕様は最小構成であり、将来的な拡張（イベント、タイマー、ライフサイクル等）を前提にしている。
+本仕様は最小構成であり、将来的な拡張（イベント、タイマー、条件分岐など）を前提にしている。
 
 ## 1. 設計方針
 
@@ -42,10 +42,10 @@ LaunchDescription
 Action は以下のユニオン型で構成される：
 
 ```sh
-Action = Node | Group
+Action = ExecuteProcess | DeclareLaunchArgument | Group | SetEnvironmentVariable
 ```
 
-（Timer / IncludeLaunch / LifecycleNode などは将来追加）
+（IncludeLaunchDescription / Timer などは将来追加）
 
 ## 3. LaunchDescription
 
@@ -62,116 +62,97 @@ LaunchDescription:
 
 - `actions`
   - 実行されるアクションのリスト
-  - Node / Group の順序は保持される
+  - 順序は保持される
 
-## 4. Node
+## 4. ExecuteProcess
 
 ### 4.1 概要
 
-Node は ROS ノード（または一般プロセス）を起動するための最小単位。
+ExecuteProcess は外部プロセスを起動するための最小単位。
 
 ### 4.2 構造
 
 ```yaml
-Node:
-  type: node
-  package: string
-  executable: string
-  name: string | null
-  namespace: string | null
-  parameters: Parameter[] | null
-  remappings: Remap[] | null
-  env: EnvVar[] | null
+ExecuteProcess:
+  type: execute_process
+  cmd: string[]
+  cwd: string | null
+  env: object | null
+  shell: boolean
   condition: Condition | null
 ```
 
 ### 4.3 説明
 
-- `package` / `executable`
-  - 起動対象のプロセス
-- `name` / `namespace`
-  - ROS 名の設定
-- `parameters`
-  - 型付きパラメータ
-- `remappings`
-  - ROS 名のリマッピング
+- `cmd`
+  - 実行するコマンドと引数
+- `cwd`
+  - 実行ディレクトリ
 - `env`
-  - 環境変数
+  - 環境変数のマップ
+- `shell`
+  - シェル経由で実行するか
 - `condition`
   - 条件付き実行
 
-## 5. Group
+## 5. DeclareLaunchArgument
 
 ### 5.1 概要
 
-Group はスコープ（namespace / parameters / env / condition）を提供する。
+Launch ファイル内で使用する引数を宣言する。
 
 ### 5.2 構造
 
 ```yaml
-Group:
-  type: group
-  namespace: string | null
-  parameters: Parameter[] | null
-  env: EnvVar[] | null
-  condition: Condition | null
-  actions: Action[]
+DeclareLaunchArgument:
+  type: declare_launch_argument
+  name: string
+  default_value: string | null
+  description: string | null
 ```
 
-### 5.3 説明
-
-- Group 内の Node / Group に対してスコープが適用される
-- 条件が false の場合、内部の actions はすべて無視される
-
-## 6. Parameter
+## 6. Group
 
 ### 6.1 概要
 
-型付きパラメータを表す。
+Group は複数のアクションをまとめ、条件を適用する。
 
 ### 6.2 構造
 
 ```yaml
-Parameter:
-  name: string
-  value: string | number | boolean | list | dict | Substitution
+Group:
+  type: group
+  actions: Action[]
+  condition: Condition | null
 ```
 
-## 7. Remap
+### 6.3 説明
+
+- Group 内の actions は順序通りに評価される
+- 条件が false の場合、内部の actions はすべて無視される
+
+## 7. SetEnvironmentVariable
 
 ### 7.1 概要
 
-ROS 名のリマッピング。
+環境変数を設定する。
 
 ### 7.2 構造
 
 ```yaml
-Remap:
-  from: string
-  to: string
+SetEnvironmentVariable:
+  type: set_env
+  name: string
+  value: string
 ```
 
-## 8. EnvVar
+## 8. Condition
 
 ### 8.1 概要
 
-環境変数の設定。
-
-### 8.2 構造
-
-```yaml
-EnvVar:
-  name: string
-  value: string | Substitution
-```
-
-## 9. Condition
-
-### 9.1 概要
-
 アクションの実行可否を制御するブール式。
 
-### 9.2 構造（最小構成）
+### 8.2 構造（最小構成）
 
 ```yaml
 Condition:
@@ -179,27 +160,26 @@ Condition:
   args: Condition[] | string[]
 ```
 
-## 10. Substitution
+## 9. Substitution
 
-### 10.1 概要
+### 9.1 概要
 
 実行時に評価される動的値。
 
-### 10.2 構造（最小構成）
+### 9.2 構造（最小構成）
 
 ```yaml
 Substitution:
-  type: find_package | env | eval | text
+  type: env | eval | text
   value: string
 ```
 
-## 11. 将来拡張（予定）
+## 10. 将来拡張（予定）
 
 以下は将来追加される可能性が高い IR ノード：
 
+- IncludeLaunchDescription
 - Timer
-- IncludeLaunch
-- LifecycleNode
 - EventHandler
 - OnExit / OnStart
 - AsyncGroup
@@ -207,26 +187,33 @@ Substitution:
 
 これらは別ドキュメントで定義する。
 
-## 12. 付録：最小 IR の例
+## 11. 付録：最小 IR の例
 
 ```yaml
 LaunchDescription:
   actions:
+    - type: declare_launch_argument
+      name: mode
+      default_value: debug
+
+    - type: set_env
+      name: LOG_LEVEL
+      value: info
+
+    - type: execute_process
+      cmd: ["echo", "hello"]
+      shell: false
+
     - type: group
-      namespace: robot1
       actions:
-        - type: node
-          package: demo_nodes_cpp
-          executable: talker
-          name: talker
-          parameters:
-            - name: rate
-              value: 10
+        - type: execute_process
+          cmd: ["echo", "inside group"]
+      condition:
+        type: equals
+        args: ["$(mode)", "debug"]
 ```
 
-## 13. ステータス
+## 12. ステータス
 
 このドキュメントは **初期ドラフト** であり、
 Issue / PR による議論を通じて更新される。
-
-必要であれば、次に **`docs/spec/python_api.md` の初期ドラフト** も作成できます。
